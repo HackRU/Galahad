@@ -27,7 +27,7 @@ deploy:
   - provider: script
     script: bash ./deployment/deploy_production.sh
     on:
-      branch: master
+      branch: fix-deployment
 
   - provider: script
     script: bash ./deployment/deploy_develop.sh
