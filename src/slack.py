@@ -11,12 +11,37 @@ def create_error_response(err_msg: str):
 
 
 def process_slack_error(error_str: str):
-    if error_str in ["user_not_found", "user_not_visible", "user_disabled"]:
+    if error_str == "contains_invalid_user":
         return add_cors_headers(
-                {"statusCode": 403, "body": f"There was an error with the user id's provided: {error_str}"})
+                {"statusCode": 403, "body": f"{error_str}: The id for one of the provided users were invalid"})
+    elif error_str == "user_not_found": 
+        return add_cors_headers(
+                {"statusCode": 403, "body": f"{error_str}: The id for both of the provided users were invalid"})
+    elif error_str == "user_not_visible": 
+        return add_cors_headers(
+                {"statusCode": 403, "body": f"{error_str}: The calling user is restricted from seeing the requested user"})
+    elif error_str == "user_disabled":
+        return add_cors_headers(
+                {"statusCode": 403, "body": f"{error_str}: One or both user accounts are disabled"})
     else:
         return create_error_response(f"Encountered a slack API error: {error_str}")
 
+def get_slack_id(email):
+    # creates the link, payload and headers to make the request for the ID
+    api_link = r"https://slack.com/api/users.lookupByEmail"
+    slack_api_payload = {"token": config.SLACK_KEYS["token"], "email": f"{email}"}
+    slack_api_headers = {"Content-Type": "application/x-www-form-urlencoded"}
+    response = requests.post(url=api_link, data=slack_api_payload, headers=slack_api_headers)
+    if response.status_code != 200:
+        return
+    # fetches the json and examines it to determine if it was successful
+    response_json = response.json()
+    was_successful = response_json["ok"]
+    # in case of failure, error message is attached and returned back
+    if not was_successful:
+        return 
+    # if everything goes well, fetches the necessary id to create the link
+    return response_json["user"]["id"]
 
 @ensure_schema({
     "type": "object",
@@ -36,13 +61,20 @@ def generate_dm_link(event, context, user=None):
     # ensures Slack Token is present in the config
     if "token" not in config.SLACK_KEYS or not config.SLACK_KEYS["token"]:
         return create_error_response("Slack API token not configured")
-    # fetches the slack id from their LCS profile
     this_slack_id = user.get("slack_id", None)
     # fetches the other user's slack id from their LCS profile
     other_slack_id = other_user.get("slack_id", None)
     # ensures both id's exist
-    if this_slack_id is None or other_slack_id is None:
-        return add_cors_headers({"statusCode": 403, "body": "Slack ID not present within LCS for the given user(s)"})
+    if this_slack_id is None:
+        this_slack_id = get_slack_id(user.get("email", None))
+        if this_slack_id is None:
+            return add_cors_headers({"statusCode": 403, "body": "Requester's Slack ID not present within LCS and email is not linked to a Slack ID"})
+    if other_slack_id is None:
+        other_slack_id = get_slack_id(other_user.get("email", None))
+        if other_slack_id is None:
+            return add_cors_headers({"statusCode": 403, "body": "Other user's Slack ID not present within LCS and email is not linked to a Slack ID"})
+    
+    
     # creates the link, payload and headers to make the request
     api_link = r"https://slack.com/api/conversations.open"
     slack_api_payload = {"token": config.SLACK_KEYS["token"], "users": f"{this_slack_id},{other_slack_id}"}
